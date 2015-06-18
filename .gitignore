@@ -8,12 +8,14 @@ __pycache__/
 # Distribution / packaging
 .Python
 env/
+venv/
+venv2/
+venv3/
 build/
 develop-eggs/
 dist/
 downloads/
 eggs/
-.eggs/
 lib/
 lib64/
 parts/
@@ -37,11 +39,9 @@ pip-delete-this-directory.txt
 htmlcov/
 .tox/
 .coverage
-.coverage.*
 .cache
 nosetests.xml
 coverage.xml
-*,cover
 
 # Translations
 *.mo
@@ -55,3 +55,6 @@ docs/_build/
 
 # PyBuilder
 target/
+
+# Intellij PyCharm
+.idea/
