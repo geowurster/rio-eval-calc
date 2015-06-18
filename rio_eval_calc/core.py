@@ -3,6 +3,8 @@ Core components for rio_eval_calc
 """
 
 
+from __future__ import division
+
 import logging
 from multiprocessing import Pool, cpu_count
 
@@ -17,22 +19,17 @@ logging.basicConfig()
 logger = logging.getLogger('rio-eval-calc')
 
 
-
 def _processor(args):
-    expressions = args['expressions']
-    infile = args['infile']
-    window = args['window']
-    read_options = args['read_options']
-    read_options.update(window=window)
-    with rio.open(infile) as src:
-        data = src.read(**read_options)
+    read_options = args['read_options'].update(window=args['window'])
+    with rio.open(args['infile']) as src:
+        data = src.read(**read_options).astype(args['math_dtype'] or src.meta['dtype'])
         scope = {
             'data': data
         }
-        for expr in expressions:
+        for expr in args['expressions']:
             scope['data'] = eval(expr, globals(), scope)
 
-        return window, scope['data']
+        return args['window'], scope['data']
 
 
 @click.command(name='eval-calc')
@@ -76,9 +73,13 @@ def _processor(args):
     '--expr', 'expressions', multiple=True,
     help="Expression to evaluate."
 )
+@click.option(
+    '--math-dtype',
+    help="Read arrays into this datatype before evaluating expressions."
+)
 @click.pass_context
 def eval_calc(ctx, infile, outfile, read_option, write_option, count, dtype,
-              driver, nodata, creation_options, expressions, jobs):
+              driver, nodata, creation_options, expressions, jobs, math_dtype):
 
     """
     Process raster data with Python syntax.
@@ -105,8 +106,10 @@ def eval_calc(ctx, infile, outfile, read_option, write_option, count, dtype,
                     'window': win,
                     'read_options': read_option,
                     'expressions': expressions,
-                    'infile': infile
+                    'infile': infile,
+                    'math_dtype': math_dtype
                 } for _, win in src.block_windows())
+
             for win, data in Pool(jobs).imap_unordered(_processor, task_generator):
                 write_option.update(window=win)
                 dst.write(data.astype(dst.meta['dtype']), **write_option)

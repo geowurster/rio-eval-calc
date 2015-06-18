@@ -50,14 +50,14 @@ setup(
     ],
     description="A raster calculator rasterio CLI plugin built on eval().",
     entry_points="""
-        [rasterio.rio_commands]
-        eval_calc=rio_eval_calc.core:eval_calc
+        [rasterio.rio_plugins]
+        eval-calc=rio_eval_calc.core:eval_calc
     """,
     extras_require={
         'test': ['pytest', 'pytest-cov']
     },
     include_package_data=True,
-    install_requires=['click>=0.3', 'rasterio'],
+    install_requires=['click>=0.3', 'rasterio', 'str2type>=0.4'],
     keywords='Rasterio rio raster calculator plugin',
     license="New BSD",
     long_description=readme,
