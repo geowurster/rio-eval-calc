@@ -14,6 +14,7 @@ import string
 from multiprocessing import Pool, cpu_count
 
 import click
+import numpy as np
 import rasterio as rio
 import str2type.ext
 
@@ -31,12 +32,13 @@ def window_filter(window_iter, bbox, aff):
     """
 
     x_min, y_min, x_max, y_max = bbox
-    c_min, r_max = (x_min, y_min) * aff
-    c_max, r_min = (x_max, y_max) * aff
+    c_min, r_max = (x_min, y_min) * ~aff
+    c_max, r_min = (x_max, y_max) * ~aff
     for window in window_iter:
         ((w_r_min, w_r_max), (w_c_min, w_c_max)) = window
-        if ((w_c_min <= c_min <= w_c_max) or (w_c_min <= c_max <= w_c_max)) \
-                and ((w_r_min <= r_min <= w_r_max) or (w_r_min <= r_max <= w_r_max)):
+
+        if ((w_r_max <= r_min) or (w_r_min <= r_max)) \
+                and ((w_c_max <= c_min) or (w_c_min <= c_max)):
             yield window
 
 
@@ -67,8 +69,9 @@ def _cb_name(ctx, param, value):
                 raise click.BadParameter('Invalid syntax: {}'.format(pair))
             else:
                 char, ds = pair.split('=', 1)
-                if char not in list(string.ascii_letters):
-                    raise click.BadParameter("Variable is not a letter: {}".format(char))
+                if char[0] not in list(string.ascii_letters):
+                    raise click.BadParameter(
+                        "Variable names must start with a letter: {}".format(char))
                 output[char] = ds
 
     return output
@@ -92,16 +95,16 @@ def _cb_bbox(ctx, param, value):
 
 def _processor(args):
 
-    scope = {}
+    scope = {'np': np}
     for var, ds in args['input_names'].items():
         with rio.open(ds) as src:
             scope[var] = src.read(window=args['window'], boundless=True,
                                   masked=args['masked']).astype(args['calc_dtype'])
 
     for expr in args['expressions']:
-        eval(expr, globals(), scope)
+        result = eval(expr, globals(), scope)
 
-    return args['window'], scope['data']
+    return args['window'], result
 
 
 def _cb_res(ctx, param, value):
@@ -137,6 +140,11 @@ def _cb_res(ctx, param, value):
     '-o', '--output', required=True,
     help="Output datasource."
 )
+@click.option(
+    '--np-seterr', metavar='NAME=VAL', default=['all=ignore'], multiple=True,
+    callback=str2type.ext.click_cb_key_val,
+    help="Configure numpy error handling. (default: all=ignore)"
+)
 @click.argument(
     'expressions', nargs=-1, required=True
 )
@@ -168,9 +176,9 @@ def _cb_res(ctx, param, value):
     help="Nodata for output image."
 )
 @click.option(
-    '-t', '--dtype', default=rio.float32,
+    '-t', '--dtype',
     type=click.Choice(['ubyte', 'uint16', 'int16', 'uint32', 'int32', 'float32', 'float64']),
-    help="Output data type. (default: Float32)"
+    help="Output data type. (default: detected)"
 )
 @click.option(
     '--windows', 'window_ds_var', metavar='VARIABLE',
@@ -178,8 +186,8 @@ def _cb_res(ctx, param, value):
          "for reading and writing. (default: first)"
 )
 @click.option(
-    '--calc-dtype',
-    help="Convert data to this dtype on read. (default: --dtype)"
+    '--calc-dtype', default=rio.float32,
+    help="Convert data to this dtype on read. (default: Float32)"
 )
 @click.option(
     '--bbox', nargs=4, metavar="XMIN YMIN XMAX YMAX",
@@ -204,18 +212,15 @@ def _cb_res(ctx, param, value):
     '--masked / --no-masked', is_flag=True,
     help="Evaluate expressions using masked arrays. (default: masked)"
 )
-@click.option(
-    '--count', type=click.INT,
-    help="Number of bands in the output datasource. (default: first --name)"
-)
 @click.pass_context
 def eval_calc(ctx, input_names, output, expressions, jobs, bbox, driver, creation_options,
-              nodata, dtype, window_ds_var, calc_dtype, res, shape, a_crs, masked,
-              count):
+              nodata, dtype, window_ds_var, calc_dtype, res, shape, a_crs, masked, np_seterr):
 
     """
     Process raster data with Python syntax.
     """
+
+    np.seterr(**np_seterr)
 
     if isinstance(getattr(ctx, 'obj'), dict):
         logger.setLevel(ctx.obj.get('verbosity', 1))
@@ -253,19 +258,20 @@ def eval_calc(ctx, input_names, output, expressions, jobs, bbox, driver, creatio
         res = first_meta['res']
         height, width = (first_meta['height'], first_meta['width'])
 
+    # count and dtype are detected from the first result
     meta = {
-        'dtype': dtype,
         'height': height,
         'width': width,
         'nodata': nodata,
         'driver': driver,
         'crs': a_crs or first_meta['crs'],
-        'count': count or first_meta['count'],
         'transform': affine.Affine(res[0], 0.0, x_min,
-                                   0.0, res[1], y_max)
+                                   0.0, -res[1], y_max)
     }
     meta.update(**creation_options)
 
+    # Process data
+    # Get the first result so we can infer the datatype, output number of bands, etc.
     task_generator = (
         {
             'masked': masked,
@@ -274,20 +280,22 @@ def eval_calc(ctx, input_names, output, expressions, jobs, bbox, driver, creatio
             'calc_dtype': calc_dtype or dtype,
             'expressions': expressions
         } for win in window_filter(windows, bbox, meta['transform']))
+    results = Pool(jobs).imap_unordered(_processor, task_generator)
+    first_win, first_data = next(results)
 
-    write_options = {'masked': masked}
+    # Figure out the output datasource's count and dtype
+    # Assemble the options for `dst.write()`
+    meta['dtype'] = dtype or first_data.dtype
+    if len(first_data.shape) == 3:
+        meta['count'] = first_data.shape[0]
+        indexes = list(i + 1 for i in range(meta['count']))
+    else:
+        meta['count'] = 1
+        indexes = 1
     with rio.open(output, 'w', **meta) as dst:
-        for data, window in Pool(jobs).imap_unordered(_processor, task_generator):
-            
-            if 'indexes' in write_options:
-                pass
-            elif len(data.shape) == 3:
-                write_options['indexes'] = list(range(1, data.shape[0]))
-            else:
-                write_options['indexes'] = 1
-            
-            write_options['window'] = window
-            dst.write(data.astype(dst.meta['dtype']), **write_options)
+        for window, data in chain(*[[(first_win, first_data)], results]):
+            dst.write(
+                data.astype(dst.meta['dtype']), window=window, indexes=indexes)
 
 
 if __name__ == '__main__':
