@@ -234,6 +234,7 @@ def eval_calc(ctx, input_names, output, expressions, jobs, bbox, driver, creatio
         window_ds_var = list(input_names.keys())[0]
     with rio.open(input_names[window_ds_var]) as src:
         windows = [w for _, w in src.block_windows()]
+    logger.debug("Extracted windows")
 
     # Figure out the spatial extent of the data being processed
     if not bbox:
@@ -243,6 +244,7 @@ def eval_calc(ctx, input_names, output, expressions, jobs, bbox, driver, creatio
                 bounds.append(src.bounds)
         bbox = min_bbox(*bounds)
     x_min, y_min, x_max, y_max = bbox
+    logger.debug("Processing data within bbox %s", bbox)
 
     # Assemble the output metadata
     with rio.open(list(input_names.values())[0]) as src:
@@ -257,6 +259,7 @@ def eval_calc(ctx, input_names, output, expressions, jobs, bbox, driver, creatio
     else:
         res = first_meta['res']
         height, width = (first_meta['height'], first_meta['width'])
+    logger.debug("Output image is %s x %s with a resolution of %s", height, width, res)
 
     # count and dtype are detected from the first result
     meta = {
@@ -292,10 +295,16 @@ def eval_calc(ctx, input_names, output, expressions, jobs, bbox, driver, creatio
     else:
         meta['count'] = 1
         indexes = 1
+    logger.debug("Got the first result")
+    logger.debug("    dtype: %s", first_data.dtype)
+    logger.debug("    shape: %s", first_data.shape)
+    logger.debug("    indexes: %s", indexes)
+    logger.debug("Output meta: %s", meta)
     with rio.open(output, 'w', **meta) as dst:
         for window, data in chain(*[[(first_win, first_data)], results]):
             dst.write(
                 data.astype(dst.meta['dtype']), window=window, indexes=indexes)
+        logger.debug("Finished processing")
 
 
 if __name__ == '__main__':
