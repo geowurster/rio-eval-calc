@@ -1,13 +1,11 @@
-"""
-Core components for rio_eval_calc
-"""
+"""Core components for ``rio_eval_calc``."""
 
 
 from __future__ import division
 
 import affine
 from collections import OrderedDict
-from itertools import chain
+import itertools as it
 import logging
 import math
 import string
@@ -19,17 +17,20 @@ import rasterio as rio
 import str2type.ext
 
 from rio_eval_calc import __version__
+import rasterio.dtypes
 
 
-logging.basicConfig()
 logger = logging.getLogger('rio-eval-calc')
+
+
+DTYPE_CHOICES = [
+    'ubyte', 'uint8', 'uint16', 'int16', 'uint32', 'int32',
+    'float32', 'float64']
 
 
 def window_filter(window_iter, bbox, aff):
 
-    """
-    Only yield windows that intersect the bbox.
-    """
+    """Only yield windows that intersect the bbox."""
 
     x_min, y_min, x_max, y_max = bbox
     c_min, r_max = (x_min, y_min) * ~aff
@@ -44,20 +45,21 @@ def window_filter(window_iter, bbox, aff):
 
 def min_bbox(*bboxes):
 
-    """
-    Compute a minimum bounding box from a series of (xmin, ymin, xmax, ymax)
-    tuples.
+    """Compute a minimum bounding box from a series of
+    `(xmin, ymin, xmax, ymax)` tuples.
     """
 
-    coords = list(chain(*bboxes))
-    return min(coords[0::2]), min(coords[1::2]), max(coords[2::2]), max(coords[3::2])
+    coords = list(it.chain.from_iterable(bboxes))
+    return min(coords[0::2]), \
+           min(coords[1::2]), \
+           max(coords[2::2]), \
+           max(coords[3::2])
 
 
 def _cb_name(ctx, param, value):
 
-    """
-    Click callback to validate --name and convert it to a dict with variables
-    as keys and datasources as values.
+    """Click callback to validate `--name` and convert it to a dictionary with
+    variables as keys and datasources as values.
     """
 
     output = OrderedDict()
@@ -71,7 +73,8 @@ def _cb_name(ctx, param, value):
                 char, ds = pair.split('=', 1)
                 if char[0] not in list(string.ascii_letters):
                     raise click.BadParameter(
-                        "Variable names must start with a letter: {}".format(char))
+                        "Variable names must start with a letter: "
+                        "{}".format(char))
                 output[char] = ds
 
     return output
@@ -79,16 +82,15 @@ def _cb_name(ctx, param, value):
 
 def _cb_bbox(ctx, param, value):
 
-    """
-    Click callback for --bbox to validate.
-    """
+    """Click callback to validate `--bbox`."""
 
     if value is None:
         return value
     else:
         x_min, y_min, x_max, y_max = value
         if (x_min > x_max) or (y_min > y_max):
-            raise click.BadParameter("self-intersection detected: {}".format(value))
+            raise click.BadParameter(
+                "self-intersection detected: {}".format(value))
         else:
             return value
 
@@ -98,8 +100,10 @@ def _processor(args):
     scope = {'np': np}
     for var, ds in args['input_names'].items():
         with rio.open(ds) as src:
-            scope[var] = src.read(window=args['window'], boundless=True,
-                                  masked=args['masked']).astype(args['calc_dtype'])
+            scope[var] = src.read(
+                window=args['window'],
+                boundless=True,
+                masked=args['masked']).astype(args['calc_dtype'])
 
     for expr in args['expressions']:
         result = eval(expr, globals(), scope)
@@ -133,92 +137,72 @@ def _cb_res(ctx, param, value):
 @click.version_option(prog_name='rio-eval-calc', version=__version__)
 @click.option(
     '--name', 'input_names', multiple=True, required=True, callback=_cb_name,
-    help="Specify an input file with a unique short (alphas only) name for use in commands "
-         "like a=tests/data/RGB.byte.tif."
-)
+    help="Specify an input file with a unique short (alphas only) name for "
+         "use in commands like 'a=data.tif'.")
 @click.option(
     '-o', '--output', required=True,
-    help="Output datasource."
-)
+    help="Output datasource.")
 @click.option(
     '--np-seterr', metavar='NAME=VAL', default=['all=ignore'], multiple=True,
     callback=str2type.ext.click_cb_key_val,
-    help="Configure numpy error handling. (default: all=ignore)"
-)
+    help="Configure numpy error handling. (default: all=ignore)")
 @click.argument(
-    'expressions', nargs=-1, required=True
-)
-# @click.option(
-#     '--ro', '--read-option', 'read_options', metavar='NAME=VAL', multiple=True,
-#     callback=str2type.ext.click_cb_key_val,
-#     help="Keyword arguments for `src.read()`."
-# )
-# @click.option(
-#     '--wo', '--write-option', 'write_options', metavar='NAME=VAl', multiple=True,
-#     callback=str2type.ext.click_cb_key_val,
-#     help="Keyword arguments for `dst.write()`."
-# )
+    'expressions', nargs=-1, required=True)
 @click.option(
     '--jobs', metavar='CORES', default=1, type=click.IntRange(1, cpu_count()),
-    help="Process data in parallel across N cores."
-)
+    help="Process data in parallel across N cores.")
 @click.option(
     '--driver', metavar='NAME', default='GTiff',
     help="Output driver name. (default: GTiff)"
 )
 @click.option(
-    '-c', '--creation-option', 'creation_options', metavar='NAME=VAL', multiple=True,
-    callback=str2type.ext.click_cb_key_val,
-    help="Driver specific creation options."
-)
+    '-c', '--creation-option', 'creation_options', metavar='NAME=VAL',
+    multiple=True, callback=str2type.ext.click_cb_key_val,
+    help="Driver specific creation options.")
 @click.option(
     '--nodata', type=click.FLOAT,
-    help="Nodata for output image."
-)
+    help="Nodata for output image.")
 @click.option(
     '-t', '--dtype',
-    type=click.Choice(['ubyte', 'uint16', 'int16', 'uint32', 'int32', 'float32', 'float64']),
-    help="Output data type. (default: detected)"
-)
+    type=click.Choice(
+        ['ubyte', 'uint16', 'int16', 'uint32', 'int32', 'float32', 'float64']),
+    help="Output data type.  Detected from the first result by default.")
 @click.option(
     '--windows', 'window_ds_var', metavar='VARIABLE',
-    help="Variable assigned to the datasource whose window structure should be used "
-         "for reading and writing. (default: first)"
-)
+    help="Variable assigned to the datasource whose window structure should "
+         "be used for reading and writing. (default: first)")
 @click.option(
     '--calc-dtype', default=rio.float32,
-    help="Convert data to this dtype on read. (default: Float32)"
-)
+    help="Convert data to this dtype on read. (default: Float32)")
 @click.option(
     '--bbox', nargs=4, metavar="XMIN YMIN XMAX YMAX",
     help="Only process data within the specified bounding box. "
-         "(default: min bbox for all --name's)"
-)
+         "(default: min bbox for all --name's)")
 @click.option(
-    '--res', multiple=True, type=click.FLOAT, metavar="XRES [YRES]",
-    help="Output resolution in georeferenced units.  Specify once to set X and Y resolution "
-         "to the same value or twice for different values.  (default: from first --name)"
-)
+    '--res', multiple=True, type=click.FLOAT,
+    help="Output resolution in georeferenced units.  Specify once to set X "
+         "and Y resolution to the same value or twice for different values.  "
+         "Use '--res X --res Y' for non-square pixels.  Is set by from the "
+         "first '--name' by default.")
 @click.option(
     '--shape', metavar="ROWS COLS", nargs=2, type=click.INT,
-    help="Shape of output raster in rows and columns.  Cannot be combined with --res. "
-         "(default: see --res)"
-)
+    help="Shape of output raster in rows and columns.  Cannot be combined "
+         "with --res. Is set by the first '--name' by default.")
 @click.option(
-    '--a-crs', help="Assign a CRS to the output datasource.  No CRS checks are performed for "
-                    "the input datasources. (default: from first --name)"
-)
+    '--a-crs',
+    help="Assign a CRS to the output datasource.  No CRS checks are "
+         "performed for the input datasources.  Is set by the first '--name' "
+         "by default.")
 @click.option(
-    '--masked / --no-masked', is_flag=True,
-    help="Evaluate expressions using masked arrays. (default: masked)"
-)
+    '--masked / --no-masked', is_flag=True, show_default=True,
+    help="Evaluate expressions using masked arrays.")
 @click.pass_context
-def eval_calc(ctx, input_names, output, expressions, jobs, bbox, driver, creation_options,
-              nodata, dtype, window_ds_var, calc_dtype, res, shape, a_crs, masked, np_seterr):
+def eval_calc(
+        ctx, input_names, output, expressions, jobs, bbox, driver,
+        creation_options, nodata, dtype, window_ds_var, calc_dtype, res,
+        shape, a_crs, masked, np_seterr):
 
-    """
-    Process raster data with Python syntax.
-    """
+    """Raster calculator with direct access to NumPy arrays."""
 
     np.seterr(**np_seterr)
 
@@ -259,7 +243,8 @@ def eval_calc(ctx, input_names, output, expressions, jobs, bbox, driver, creatio
     else:
         res = first_meta['res']
         height, width = (first_meta['height'], first_meta['width'])
-    logger.debug("Output image is %s x %s with a resolution of %s", height, width, res)
+    logger.debug(
+        "Output image is %s x %s with a resolution of %s", height, width, res)
 
     # count and dtype are detected from the first result
     meta = {
@@ -274,7 +259,8 @@ def eval_calc(ctx, input_names, output, expressions, jobs, bbox, driver, creatio
     meta.update(**creation_options)
 
     # Process data
-    # Get the first result so we can infer the datatype, output number of bands, etc.
+    # Get the first result so we can infer the datatype, output number of
+    # bands, etc.
     task_generator = (
         {
             'masked': masked,
@@ -301,7 +287,7 @@ def eval_calc(ctx, input_names, output, expressions, jobs, bbox, driver, creatio
     logger.debug("    indexes: %s", indexes)
     logger.debug("Output meta: %s", meta)
     with rio.open(output, 'w', **meta) as dst:
-        for window, data in chain(*[[(first_win, first_data)], results]):
+        for window, data in it.chain.from_iterable([[(first_win, first_data)], results]):
             dst.write(
                 data.astype(dst.meta['dtype']), window=window, indexes=indexes)
         logger.debug("Finished processing")

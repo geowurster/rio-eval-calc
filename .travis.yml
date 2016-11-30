@@ -1,20 +1,20 @@
+sudo: false
 language: python
-
+dist: trusty
+env:
+  global:
+    - PIP_WHEEL_DIR=$HOME/.cache/pip
+    - PIP_FIND_LINKS=$HOME/.cache/pip
 python:
   - "2.7"
-  - "3.3"
-  - "3.4"
-
-before_install:
-  - sudo add-apt-repository -y ppa:ubuntugis/ppa
-  - sudo apt-get update -qq
-  - sudo apt-get install -y libgdal1h gdal-bin libgdal-dev
-
+  - "3.5"
+cache:
+  directories:
+    - $HOME/.cache/pip/
 install:
-  - "pip install -e .[test]"
-
-script: 
-  - py.test tests --cov rio_eval_calc --cov-report term-missing
-
+  - pip install -U pip
+  - pip install -e .[all]
+script:
+  - pytest --cov rio_eval_calc --cov-report term-missing
 after_success:
   - coveralls
