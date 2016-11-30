@@ -77,7 +77,8 @@ setup(
     include_package_data=True,
     install_requires=[
         'click',
-        'rasterio',
+        'numpy>=1.10',
+        'rasterio>=1.0a2',
         'str2type>=0.4'],
     keywords='Rasterio rio raster calculator plugin',
     license="New BSD",
